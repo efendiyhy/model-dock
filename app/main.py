@@ -12,6 +12,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import sys
 import threading
 import time
 import uuid
@@ -38,6 +39,11 @@ KEY_FILE = DATA / "demo_api_key.txt"
 STATIC = ROOT / "app" / "static"
 DEMO_MODEL = ROOT / "examples" / "iris_classifier.joblib"
 MAX_UPLOAD = 35 * 1024 * 1024
+# Folder for Python modules that define custom model classes (e.g. ncs_models.py).
+# Pickled models only store object state, so their class's module must be importable.
+CUSTOM_MODULES = Path(os.getenv("MODELDOCK_CUSTOM_MODULES_DIR", str(ROOT / "custom_modules"))).resolve()
+if CUSTOM_MODULES.is_dir() and str(CUSTOM_MODULES) not in sys.path:
+    sys.path.insert(0, str(CUSTOM_MODULES))
 LOCK = threading.RLock()
 CACHE: dict[str, Any] = {}
 # Defaults are specifically for local prototyping. Change these via environment
@@ -87,6 +93,27 @@ def as_json(v: Any) -> Any:
     if isinstance(v, float) and not np.isfinite(v):
         return None
     return v
+
+
+def read_model_file(path: Path | str) -> Any:
+    """joblib.load with a clear message when a custom class's module is missing."""
+    try:
+        return joblib.load(path)  # Trusted files ONLY.
+    except ModuleNotFoundError as exc:
+        missing = exc.name or str(exc)
+        raise ValueError(
+            f"Model memakai class kustom dari modul '{missing}' yang tidak ada di server. "
+            f"Salin file '{missing.split('.')[0]}.py' (kode class yang dipakai saat training) "
+            f"ke folder custom_modules/ lalu restart server."
+        ) from exc
+    except AttributeError as exc:
+        if "Can't get attribute" in str(exc) or "can't get attribute" in str(exc).lower():
+            raise ValueError(
+                f"Class kustom tidak ditemukan ({exc}). Jika class didefinisikan di notebook (__main__), "
+                "pindahkan ke file .py, simpan di folder custom_modules/, import dari file tersebut, "
+                "lalu latih/simpan ulang model."
+            ) from exc
+        raise
 
 
 def inspect_estimator(model: Any, manual_features: str = "") -> dict:
@@ -142,7 +169,7 @@ def load_model(row: sqlite3.Row):
     key = row["slug"]
     with LOCK:
         if key not in CACHE:
-            CACHE[key] = joblib.load(row["file_path"])  # Trusted files ONLY.
+            CACHE[key] = read_model_file(row["file_path"])  # Trusted files ONLY.
         return CACHE[key]
 
 
@@ -367,7 +394,7 @@ async def add_model(file: UploadFile = File(...), name: str = Form(...), descrip
             raise HTTPException(400, "File model kosong.")
         # Deserialization is potentially arbitrary code execution: TRUSTED LOCAL FILES ONLY.
         try:
-            estimator = joblib.load(target)
+            estimator = read_model_file(target)
             meta = inspect_estimator(estimator, features)
         except Exception as exc:
             raise HTTPException(422, f"Model tidak bisa dibaca: {str(exc)[:280]}") from exc

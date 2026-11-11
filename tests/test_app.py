@@ -96,3 +96,51 @@ def test_invalid_file_and_input_schema():
     assert fake.status_code == 400
     assert client.post('/api/models/iris-demo/test',json={'inputs':{}}).status_code == 422
     assert client.post('/api/models/iris-demo/test',json={'inputs':[1,2]}).status_code == 422
+
+
+def test_upload_custom_class_model_ncs_models_gabungan():
+    """Models pickled as ncs_models.Gabungan (SVM ensemble) must upload and predict."""
+    import numpy as np
+    from sklearn.impute import SimpleImputer
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.svm import SVC
+    from ncs_models import Gabungan
+
+    feats = ['f_a', 'f_b', 'f_c']
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(60, 3))
+    y = np.array(['Absent', 'Mild', 'Moderate'])[np.arange(60) % 3]
+    X[y == 'Moderate', 0] += 4
+    import pandas as pd
+    pipe = Pipeline([('i', SimpleImputer(strategy='median')), ('s', StandardScaler()),
+                     ('m', SVC(probability=True, random_state=42))]).fit(pd.DataFrame(X, columns=feats), y)
+    model = Gabungan()
+    model.__dict__.update({'anggota': [(feats, None, False, 1)], 'seed': 42,
+                           'classes_': np.array(['Absent', 'Mild', 'Moderate']),
+                           'prior_': np.array([1/3, 1/3, 1/3]), 'model_': [(feats, pipe, False, 1)]})
+    buf = io.BytesIO()
+    joblib.dump(model, buf)
+    slug = 'svm-gabungan-' + uuid.uuid4().hex[:8]
+    created = client.post('/api/models', files={"file": ("SVM_Dasar.joblib", buf.getvalue())},
+                          data={"name": slug, "trusted": "true"})
+    assert created.status_code == 201, created.text
+    meta = created.json()['model']
+    assert meta['features'] == feats and meta['task'] == 'classification'
+    result = client.post(f'/v1/{slug}/predict', headers={'X-API-Key': key()},
+                         json={"inputs": [{"f_a": 5, "f_b": 0, "f_c": 0}, {"f_a": None, "f_b": 0, "f_c": 0}]})
+    assert result.status_code == 200, result.text
+    body = result.json()
+    assert body['predictions'][0] == 'Moderate'
+    assert all(abs(sum(p) - 1) < 1e-6 for p in body['probabilities'])
+    assert client.post(f'/v1/{slug}/predict', headers={'X-API-Key': key()}, json={"inputs": [5, 0, 0]}).status_code == 200
+    assert client.delete(f'/api/models/{slug}').status_code == 200
+
+
+def test_missing_custom_module_gives_clear_error():
+    # Hand-craft a pickle that references a module that does not exist on the server.
+    raw = b'\x80\x04\x8c\x0eno_such_module\x8c\x03Foo\x93)\x81.'
+    created = client.post('/api/models', files={"file": ("x.pkl", raw)},
+                          data={"name": 'missing-' + uuid.uuid4().hex[:6], "trusted": "true"})
+    assert created.status_code == 422
+    assert 'custom_modules' in created.json()['detail']

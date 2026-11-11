@@ -88,6 +88,20 @@ Use **Deploy New Model** to upload it, tick the trust acknowledgement, and click
 
 **Tip:** Save the complete preprocessing pipeline along with the estimator (for example `StandardScaler` + classifier) rather than the final estimator alone. The demo does not support automatically installing custom model dependencies.
 
+## Models with custom classes (e.g. `ncs_models.Gabungan`)
+
+A joblib/pickle file only stores an object's *data*; the Python **class** must be importable on the server
+under the same module name. If upload fails with `No module named '...'`, copy the `.py` file that defines
+the class (the one imported in your training notebook) into the **`custom_modules/`** folder and restart
+the server. That folder is added to `sys.path` automatically (override with `MODELDOCK_CUSTOM_MODULES_DIR`).
+
+`custom_modules/ncs_models.py` is already included: it supports `Gabungan` ensemble models (e.g. `SVM_Dasar.joblib`,
+SimpleImputer → StandardScaler → SVC). Feature names and classes are detected automatically, and prediction is a weighted
+average of each member's `predict_proba`. If you have the original `ncs_models.py`, you can replace this file with it.
+
+Classes defined directly in a notebook (`__main__`) cannot be loaded from a server. Move the class into a `.py` file,
+import it from there, then retrain/re-save the model.
+
 ## Structure
 
 ```
