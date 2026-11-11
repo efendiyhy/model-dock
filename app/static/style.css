@@ -32,3 +32,5 @@
 .fold-title small{font-size:12px;line-height:18px;font-weight:400;color:var(--muted)}
 .activity-stack{margin-top:12px}
 @media(max-width:480px){.utility-grid .fold summary{padding:18px 16px}}
+
+.dropzone-compact{padding:16px 18px}.dropzone-compact strong{font-size:13px}.optional{color:var(--muted);font-weight:400}

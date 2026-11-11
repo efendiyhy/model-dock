@@ -144,3 +144,61 @@ def test_missing_custom_module_gives_clear_error():
                           data={"name": 'missing-' + uuid.uuid4().hex[:6], "trusted": "true"})
     assert created.status_code == 422
     assert 'custom_modules' in created.json()['detail']
+
+
+def _pickle_with_custom_module(module_name, code):
+    """Build a joblib file whose class lives in a module the server does not have yet."""
+    import importlib.util
+    import sys
+    tmp = Path(tempfile.mkdtemp()) / f"{module_name}.py"
+    tmp.write_text(code)
+    spec = importlib.util.spec_from_file_location(module_name, tmp)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = mod
+    spec.loader.exec_module(mod)
+    buf = io.BytesIO()
+    joblib.dump(mod.Doubler(), buf)
+    del sys.modules[module_name]
+    return buf.getvalue(), code.encode()
+
+
+DOUBLER = '''
+import numpy as np
+class Doubler:
+    feature_names_in_ = np.array(["x"], dtype=object)
+    n_features_in_ = 1
+    def predict(self, X):
+        return np.asarray(X, dtype=float)[:, 0] * 2
+'''
+
+
+def test_upload_model_together_with_custom_code_file():
+    module = 'custom_' + uuid.uuid4().hex[:8]
+    model_bytes, code = _pickle_with_custom_module(module, DOUBLER)
+    slug = 'doubler-' + uuid.uuid4().hex[:6]
+    # Without the .py file the upload fails with a helpful message.
+    missing = client.post('/api/models', files={"file": ("m.joblib", model_bytes)}, data={"name": slug, "trusted": "true"})
+    assert missing.status_code == 422 and 'File kode tambahan' in missing.json()['detail']
+    created = client.post('/api/models', data={"name": slug, "trusted": "true"},
+                          files=[("file", ("m.joblib", model_bytes)), ("code_files", (f"{module}.py", code))])
+    assert created.status_code == 201, created.text
+    assert created.json()['code_files'] == [f"{module}.py"]
+    assert f"{module}.py" in client.get('/api/custom-modules').json()['uploaded']
+    result = client.post(f'/v1/{slug}/predict', headers={'X-API-Key': key()}, json={"inputs": {"x": 21}})
+    assert result.status_code == 200 and result.json()['predictions'] == [42.0]
+    assert client.delete(f'/api/models/{slug}').status_code == 200
+
+
+def test_invalid_code_files_are_rejected_and_rolled_back():
+    model_bytes, _ = _pickle_with_custom_module('custom_' + uuid.uuid4().hex[:8], DOUBLER)
+    name = 'bad-' + uuid.uuid4().hex[:6]
+    for fname, body in [("bad.py", b"def oops(:\n"), ("json.py", b"x=1\n"), ("notes.txt", b"x=1\n")]:
+        r = client.post('/api/models', data={"name": name, "trusted": "true"},
+                        files=[("file", ("m.joblib", model_bytes)), ("code_files", (fname, body))])
+        assert r.status_code == 400, (fname, r.text)
+    # Valid code but the model still can't load (wrong module) -> code file is removed again.
+    stray = 'stray_' + uuid.uuid4().hex[:6]
+    r = client.post('/api/models', data={"name": name, "trusted": "true"},
+                    files=[("file", ("m.joblib", model_bytes)), ("code_files", (f"{stray}.py", b"x = 1\n"))])
+    assert r.status_code == 422
+    assert f"{stray}.py" not in client.get('/api/custom-modules').json()['uploaded']

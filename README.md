@@ -92,8 +92,10 @@ Use **Deploy New Model** to upload it, tick the trust acknowledgement, and click
 
 A joblib/pickle file only stores an object's *data*; the Python **class** must be importable on the server
 under the same module name. If upload fails with `No module named '...'`, copy the `.py` file that defines
-the class (the one imported in your training notebook) into the **`custom_modules/`** folder and restart
-the server. That folder is added to `sys.path` automatically (override with `MODELDOCK_CUSTOM_MODULES_DIR`).
+the class (the one imported in your training notebook) in the **"File kode tambahan"** field of the upload
+dialog, together with the model (several `.py` files are allowed, max. 1 MB each). Uploaded files are stored
+in `data/custom_modules/` and take priority over the bundled ones. You can also copy the file into the
+**`custom_modules/`** folder manually and restart (override that folder with `MODELDOCK_CUSTOM_MODULES_DIR`).
 
 `custom_modules/ncs_models.py` is already included: it supports `Gabungan` ensemble models (e.g. `SVM_Dasar.joblib`,
 SimpleImputer → StandardScaler → SVC). Feature names and classes are detected automatically, and prediction is a weighted

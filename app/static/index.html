@@ -71,13 +71,19 @@
         <small id="file-subtitle">.joblib, .pkl, .pickle · maksimum 35 MB</small>
         <input id="model-file" name="file" type="file" accept=".joblib,.pkl,.pickle" required>
       </div>
+      <label class="input-label" for="code-files">File kode tambahan <span class="optional">(opsional)</span></label>
+      <div class="dropzone dropzone-compact" id="code-area">
+        <strong id="code-name">Pilih file .py (contoh: ncs_models.py)</strong>
+        <small id="code-subtitle">Wajib jika model memakai class buatan sendiri · .py · maks. 1 MB per file</small>
+        <input id="code-files" name="code_files" type="file" accept=".py" multiple>
+      </div>
       <label class="input-label" for="model-name">Nama model <span class="required">*</span></label>
       <input id="model-name" name="name" class="input" maxlength="80" placeholder="Misalnya: Klasifikasi kualitas udara" required>
       <details class="upload-options"><summary>Pengaturan tambahan</summary>
         <label class="input-label" for="model-description">Deskripsi</label><input class="input" id="model-description" name="description" maxlength="500" placeholder="Tujuan model ini">
         <label class="input-label" for="model-features">Nama fitur manual</label><input class="input mono" id="model-features" name="features" placeholder='["pm25", "suhu", "kelembapan"]'><p class="field-help">Isi urutan nama fitur sebagai JSON array hanya jika model tidak menyimpannya.</p>
       </details>
-      <label class="checkbox-row"><input type="checkbox" name="trusted" required><span>Saya memahami bahwa pickle dan joblib dapat menjalankan kode saat dibuka, dan file ini berasal dari sumber yang saya percayai.</span></label>
+      <label class="checkbox-row"><input type="checkbox" name="trusted" required><span>Saya memahami bahwa pickle/joblib dan file .py dapat menjalankan kode di server, dan file-file ini berasal dari sumber yang saya percayai.</span></label>
       <div class="dialog-footer"><button class="button button-outline" type="button" data-action="close-upload">Batal</button><button class="button button-primary" id="upload-submit" type="submit">Upload & buat API</button></div>
     </form>
   </dialog>

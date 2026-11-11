@@ -6,6 +6,7 @@ Joblib/pickle models execute Python code when deserialized. Upload ONLY trusted 
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import re
@@ -42,8 +43,14 @@ MAX_UPLOAD = 35 * 1024 * 1024
 # Folder for Python modules that define custom model classes (e.g. ncs_models.py).
 # Pickled models only store object state, so their class's module must be importable.
 CUSTOM_MODULES = Path(os.getenv("MODELDOCK_CUSTOM_MODULES_DIR", str(ROOT / "custom_modules"))).resolve()
-if CUSTOM_MODULES.is_dir() and str(CUSTOM_MODULES) not in sys.path:
-    sys.path.insert(0, str(CUSTOM_MODULES))
+# .py files uploaded from the dashboard (persisted with the data). They take priority
+# over the bundled custom_modules/ so an uploaded original replaces the bundled copy.
+UPLOADED_CODE = DATA / "custom_modules"
+UPLOADED_CODE.mkdir(parents=True, exist_ok=True)
+MAX_CODE_UPLOAD = 1024 * 1024
+for _code_dir in (CUSTOM_MODULES, UPLOADED_CODE):
+    if _code_dir.is_dir() and str(_code_dir) not in sys.path:
+        sys.path.insert(0, str(_code_dir))
 LOCK = threading.RLock()
 CACHE: dict[str, Any] = {}
 # Defaults are specifically for local prototyping. Change these via environment
@@ -95,6 +102,59 @@ def as_json(v: Any) -> Any:
     return v
 
 
+def forget_module(name: str) -> None:
+    """Drop a module (and its submodules) from the import cache so it is re-imported."""
+    for key in [k for k in sys.modules if k == name or k.startswith(name + ".")]:
+        sys.modules.pop(key, None)
+    importlib.invalidate_caches()
+
+
+async def install_code_files(files: list[UploadFile]) -> list[tuple[Path, bytes | None]]:
+    """Save uploaded .py files into UPLOADED_CODE. Returns (path, previous_content) for rollback."""
+    prepared: list[tuple[str, bytes]] = []
+    for upload in files:
+        filename = Path(upload.filename or "").name
+        if not filename:
+            continue
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\.py", filename):
+            raise HTTPException(400, f"File kode '{filename}' harus berupa file .py dengan nama modul Python yang valid (contoh: ncs_models.py).")
+        module = filename[:-3]
+        if module in sys.stdlib_module_names or module in {"app", "joblib", "numpy", "pandas", "sklearn", "scipy", "fastapi", "starlette", "pydantic", "uvicorn"}:
+            raise HTTPException(400, f"Nama file '{filename}' bentrok dengan modul bawaan Python/library. Ganti nama file.")
+        data = await upload.read(MAX_CODE_UPLOAD + 1)
+        await upload.close()
+        if len(data) > MAX_CODE_UPLOAD:
+            raise HTTPException(413, f"File kode '{filename}' maksimal 1 MB.")
+        if not data.strip():
+            raise HTTPException(400, f"File kode '{filename}' kosong.")
+        try:
+            compile(data.decode("utf-8-sig"), filename, "exec")
+        except UnicodeDecodeError:
+            raise HTTPException(400, f"File kode '{filename}' harus berupa teks UTF-8.")
+        except SyntaxError as exc:
+            raise HTTPException(400, f"File kode '{filename}' memiliki syntax error baris {exc.lineno}: {exc.msg}")
+        prepared.append((module, data))
+    installed: list[tuple[Path, bytes | None]] = []
+    with LOCK:
+        for module, data in prepared:
+            target = UPLOADED_CODE / f"{module}.py"
+            previous = target.read_bytes() if target.exists() else None
+            target.write_bytes(data)
+            installed.append((target, previous))
+            forget_module(module)
+    return installed
+
+
+def rollback_code_files(installed: list[tuple[Path, bytes | None]]) -> None:
+    with LOCK:
+        for target, previous in reversed(installed):
+            if previous is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_bytes(previous)
+            forget_module(target.stem)
+
+
 def read_model_file(path: Path | str) -> Any:
     """joblib.load with a clear message when a custom class's module is missing."""
     try:
@@ -103,8 +163,8 @@ def read_model_file(path: Path | str) -> Any:
         missing = exc.name or str(exc)
         raise ValueError(
             f"Model memakai class kustom dari modul '{missing}' yang tidak ada di server. "
-            f"Salin file '{missing.split('.')[0]}.py' (kode class yang dipakai saat training) "
-            f"ke folder custom_modules/ lalu restart server."
+            f"Upload juga file '{missing.split('.')[0]}.py' (kode class yang dipakai saat training) "
+            f"di kolom 'File kode tambahan', atau salin ke folder custom_modules/."
         ) from exc
     except AttributeError as exc:
         if "Can't get attribute" in str(exc) or "can't get attribute" in str(exc).lower():
@@ -369,7 +429,7 @@ def model_detail(slug: str):
 
 
 @app.post("/api/models", status_code=201, include_in_schema=False)
-async def add_model(file: UploadFile = File(...), name: str = Form(...), description: str = Form(""), features: str = Form(""), trusted: bool = Form(False)):
+async def add_model(file: UploadFile = File(...), name: str = Form(...), description: str = Form(""), features: str = Form(""), trusted: bool = Form(False), code_files: list[UploadFile] | None = File(None)):
     if not trusted:
         raise HTTPException(400, "Konfirmasi bahwa model adalah file tepercaya sebelum upload.")
     if not (1 <= len(name.strip()) <= 80):
@@ -383,7 +443,10 @@ async def add_model(file: UploadFile = File(...), name: str = Form(...), descrip
             raise HTTPException(409, "Nama/slug model sudah digunakan. Pilih nama lain.")
     target = MODELS / f"{uuid.uuid4().hex}{ext}"
     length = 0
+    installed_code: list[tuple[Path, bytes | None]] = []
     try:
+        # Optional companion .py files that define custom classes used by the model.
+        installed_code = await install_code_files(code_files or [])
         with target.open("wb") as out:
             while chunk := await file.read(1024 * 1024):
                 length += len(chunk)
@@ -408,9 +471,11 @@ async def add_model(file: UploadFile = File(...), name: str = Form(...), descrip
             ))
         with LOCK:
             CACHE[base] = estimator
-        return {"message": "Model berhasil di-deploy", "slug": base, "endpoint": f"/v1/{base}/predict", "model": serialize_row(get_model(base))}
+        return {"message": "Model berhasil di-deploy", "slug": base,
+                "code_files": [p.name for p, _ in installed_code], "endpoint": f"/v1/{base}/predict", "model": serialize_row(get_model(base))}
     except Exception:
         target.unlink(missing_ok=True)
+        rollback_code_files(installed_code)
         raise
     finally:
         await file.close()
@@ -440,6 +505,13 @@ def delete_model(slug: str):
         CACHE.pop(slug, None)
     Path(row["file_path"]).unlink(missing_ok=True)
     return {"deleted": slug}
+
+
+@app.get("/api/custom-modules", include_in_schema=False)
+def custom_modules_list():
+    uploaded = sorted(p.name for p in UPLOADED_CODE.glob("*.py"))
+    bundled = sorted(p.name for p in CUSTOM_MODULES.glob("*.py")) if CUSTOM_MODULES.is_dir() else []
+    return {"uploaded": uploaded, "bundled": bundled}
 
 
 @app.get("/api/requests", include_in_schema=False)
