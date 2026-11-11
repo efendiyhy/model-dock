@@ -1,0 +1,8 @@
+services:
+  modeldock:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"  # ONLY available locally: never publicly expose this prototype
+    volumes:
+      - ./data:/workspace/data
+    restart: unless-stopped

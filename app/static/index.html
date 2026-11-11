@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#000000">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="ModelDock, dashboard pengelolaan model machine learning dan FastAPI. Developed by EK Instrumentation.">
+  <link rel="icon" type="image/svg+xml" href="/static/cat-mark.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=04">
+  <script defer src="/static/app.js?v=04"></script>
+  <title>ModelDock | Model manager</title>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Langsung ke konten</a>
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="brand brand-login">
+        <img class="brand-logo" src="/static/cat-mark.svg" width="48" height="48" alt="Logo kucing EK Instrumentation">
+        <div class="brand-copy">ModelDock <small>EK Instrumentation</small></div>
+      </div>
+      <div class="login-heading">
+        <span class="eyebrow">ADMIN WORKSPACE</span>
+        <h1>Masuk ke dashboard.</h1>
+        <p>Kelola model terlatih dan endpoint API di satu tempat.</p>
+      </div>
+      <form id="login-form" autocomplete="on">
+        <label class="input-label" for="login-username">Username</label>
+        <input class="input" id="login-username" name="username" type="text" placeholder="Username admin" autocomplete="username" required autofocus>
+        <label class="input-label" for="login-password">Password</label>
+        <div class="password-wrap">
+          <input class="input" id="login-password" name="password" type="password" placeholder="Password admin" autocomplete="current-password" required>
+          <button class="password-toggle" id="toggle-password" type="button">Lihat</button>
+        </div>
+        <p class="form-error" id="login-error" role="alert" hidden></p>
+        <button class="button button-primary full-width login-submit" id="login-submit" type="submit">Masuk <span data-icon="arrow" aria-hidden="true"></span></button>
+      </form>
+      <p class="login-foot">Prototype lokal · Akses khusus administrator</p>
+    </div>
+    <p class="login-caption">Developed by <strong>EK Instrumentation</strong></p>
+  </div>
+
+  <div id="app-shell" class="app-shell is-hidden">
+    <header class="topbar-wrap">
+      <nav class="topbar" aria-label="Navigasi utama">
+        <a href="#dashboard" class="brand" id="brand-home" aria-label="ModelDock beranda">
+          <img class="brand-logo" src="/static/cat-mark.svg" width="42" height="42" alt="Logo kucing EK Instrumentation">
+          <span class="brand-copy">ModelDock <small>Model hosting</small></span>
+        </a>
+        <div class="top-actions">
+          <span class="server-pill"><span class="status-indicator"></span> Server aktif</span>
+          <button type="button" class="top-action" data-action="help" title="Panduan penggunaan"><span data-icon="book"></span><span class="action-label">Panduan</span></button>
+          <button type="button" class="top-action" id="logout-side" title="Keluar dari admin"><span data-icon="logout"></span><span class="action-label">Keluar</span></button>
+        </div>
+      </nav>
+    </header>
+    <main id="main-content" class="content"><div class="loading-state">Memuat dashboard...</div></main>
+    <footer class="footer"><span>ModelDock · ML inference API</span><strong>Developed by EK Instrumentation</strong></footer>
+  </div>
+
+  <dialog class="dialog upload-dialog" id="upload-dialog" aria-labelledby="upload-title">
+    <div class="dialog-header"><div><span class="eyebrow">MODEL BARU</span><h2 id="upload-title">Upload model terlatih</h2><p>Setelah berhasil disimpan, endpoint FastAPI langsung tersedia.</p></div><button type="button" class="dialog-close" data-action="close-upload" aria-label="Tutup">×</button></div>
+    <form id="upload-form">
+      <label class="input-label" for="model-file">File model <span class="required">*</span></label>
+      <div class="dropzone" id="file-area">
+        <div class="drop-symbol" data-icon="upload"></div>
+        <strong id="file-name">Pilih file model</strong>
+        <small id="file-subtitle">.joblib, .pkl, .pickle · maksimum 35 MB</small>
+        <input id="model-file" name="file" type="file" accept=".joblib,.pkl,.pickle" required>
+      </div>
+      <label class="input-label" for="model-name">Nama model <span class="required">*</span></label>
+      <input id="model-name" name="name" class="input" maxlength="80" placeholder="Misalnya: Klasifikasi kualitas udara" required>
+      <details class="upload-options"><summary>Pengaturan tambahan</summary>
+        <label class="input-label" for="model-description">Deskripsi</label><input class="input" id="model-description" name="description" maxlength="500" placeholder="Tujuan model ini">
+        <label class="input-label" for="model-features">Nama fitur manual</label><input class="input mono" id="model-features" name="features" placeholder='["pm25", "suhu", "kelembapan"]'><p class="field-help">Isi urutan nama fitur sebagai JSON array hanya jika model tidak menyimpannya.</p>
+      </details>
+      <label class="checkbox-row"><input type="checkbox" name="trusted" required><span>Saya memahami bahwa pickle dan joblib dapat menjalankan kode saat dibuka, dan file ini berasal dari sumber yang saya percayai.</span></label>
+      <div class="dialog-footer"><button class="button button-outline" type="button" data-action="close-upload">Batal</button><button class="button button-primary" id="upload-submit" type="submit">Upload & buat API</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog detail-dialog" id="model-dialog" aria-labelledby="detail-title"><div id="detail-content"></div></dialog>
+  <dialog class="dialog confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <h2 id="confirm-title">Konfirmasi tindakan</h2>
+    <p id="confirm-message"></p>
+    <div class="dialog-footer"><button class="button button-outline" type="button" data-action="cancel-confirm">Batal</button><button class="button button-danger" type="button" id="confirm-accept" data-action="accept-confirm">Lanjutkan</button></div>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
